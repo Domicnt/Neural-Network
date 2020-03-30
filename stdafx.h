@@ -1,3 +1,9 @@
 #pragma once
 
-#include "cstdio"
+#include "iostream"
+#include <iomanip>
+#include "vector"
+#include "cstdlib"
+
+#include "matrix.h"
+#include "neuralNetwork.h"
