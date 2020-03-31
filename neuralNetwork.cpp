@@ -8,15 +8,19 @@ NeuralNetwork::NeuralNetwork(std::vector<int> size)
 	for (auto i = 0; i < std::size(size); i++)
 	{
 		layers.emplace_back();
+		errors.emplace_back();
+		errorsSum.emplace_back();
 		for (auto j = 0; j < size[i]; j++)
 		{
-			layers[i].neurons.emplace_back();
-			layers[i].error.emplace_back();
+			layers[i].z.emplace_back();
+			layers[i].activation.emplace_back();
+			errors[i].emplace_back();
+			errorsSum[i].emplace_back();
 		}
 	}
-	for (auto i = 0; i < std::size(layers) - 1; i++)
+	for (auto i = 1; i < std::size(layers); i++)
 	{
-		layers[i].weights = { int(std::size(layers[i].neurons)), int(std::size(layers[i + 1].neurons)) };
+		layers[i].weights = { int(std::size(layers[i].activation)), int(std::size(layers[i - 1].activation)) };
 		layers[i].weights.randomize();
 	}
 }
@@ -34,81 +38,119 @@ double NeuralNetwork::sigmoidDerivative(double const& x)
 	return x * (1 - x);
 }
 
-void NeuralNetwork::calculate(std::vector<double> const& inputs)
+void NeuralNetwork::propagate(std::vector<double> const& inputs)
 {
 	//load inputs into first layer of NN
 	for (auto i = 0; i < std::size(inputs); i++)
 	{
-		layers[0].neurons[i] = inputs[i];
+		layers[0].activation[i] = inputs[i];
 	}
 	//loop through all layers of the NN, calculating all values
 	for (auto i = 1; i < std::size(layers); i++)
 	{
-		for (auto j = 0; j < std::size(layers[i].neurons); j++)
+		for (auto j = 0; j < std::size(layers[i].activation); j++)
 		{
-			//add up values * weights
-			double sum = 0;
-			for (auto k = 0; k < std::size(layers[i - 1].neurons); k++)
+			//add bias and values * weights
+			layers[i].z[j] = layers[i].bias;
+			for (auto k = 0; k < std::size(layers[i - 1].activation); k++)
 			{
-				sum += layers[i - 1].neurons[k] * layers[i - 1].weights.elements[k][j];
+				layers[i].z[j] += layers[i - 1].activation[k] * layers[i].weights.elements[j][k];
 			}
-			layers[i].neurons[j] = sigmoid(sum) + layers[i].bias;
+			//get the activation of the neuron
+			layers[i].activation[j] = sigmoid(layers[i].z[j]);
 		}
 	}
 }
 
 void NeuralNetwork::error(std::vector<double> const& outputs)
 {
-	//first layer
+	//find error of output layer
 	for (auto i = 0; i < std::size(outputs); i++)
 	{
-		layers[std::size(layers) - 1].error[i] = .5 * pow(outputs[i] - layers[std::size(layers) - 1].neurons[i], 2);
+		errors[std::size(layers) - 1][i] = (layers[std::size(layers) - 1].activation[i] - outputs[i]) * sigmoidDerivative(layers[std::size(layers) - 1].z[i]);
 	}
-	//hidden layers
-	for (auto i = std::size(layers) - 2; i > 0; i--)
+
+	//loop through each layer, going backwards
+	for (int i = std::size(layers) - 2; i > 0; i--)
 	{
-		for (auto j = 0; j < std::size(layers[i].neurons); j++)
+		//loop through each neuron in that layer
+		for (auto j = 0; j < std::size(layers[i].activation); j++)
 		{
-			layers[i].error[j] = 0;
-			for (auto k = 0; k < std::size(layers[i + 1].neurons); k++)
+			//loop through each neuron in the layer ahead
+			for (auto k = 0; k < std::size(layers[i + 1].activation); k++)
 			{
-				layers[i].error[j] += (layers[i].weights.elements[j][k] * layers[i + 1].error[k]) + sigmoidDerivative(layers[i + 1].neurons[k]);
+				errors[i][j] = errors[i + 1][k] * layers[i + 1].weights.elements[k][j] * sigmoidDerivative(layers[i].z[j]);
 			}
 		}
 	}
 }
 
-void NeuralNetwork::trainstep(std::vector<double> const& inputs, std::vector<double> const& outputs)
+void NeuralNetwork::backpropagate()
 {
-	calculate(inputs);
-	error(outputs);
-
+	//loop through each layer, going backwards
+	for (int i = std::size(layers) - 1; i > 0; i--)
+	{
+		//loop through each neuron in the previous layer
+		for (auto j = 0; j < std::size(layers[i - 1].activation); j++)
+		{
+			//loop through each neuron in this layer
+			for (auto k = 0; k < std::size(layers[i].activation); k++)
+			{
+				layers[i].weights.elements[k][j] -= errorsSum[i][k] * layers[i - 1].activation[j] * learningRate;
+				layers[i].bias -= errorsSum[i][k] * learningRate;
+			}
+		}
+	}
 }
 
 void NeuralNetwork::train(std::vector<std::vector<double>> const& inputs, std::vector<std::vector<double>> const& outputs, int const& epoch)
 {
-	int input = 0;
-	int output = 0;
 	for (auto i = 0; i < epoch; i++)
 	{
-		trainstep(inputs[input], outputs[output]);
-		double errors = 0;
-		for (auto j = 0; j < std::size(layers[std::size(layers) - 1].neurons); j++)
+		//find sum of error
+		for (auto j = 0; j < std::size(inputs); j++)
 		{
-			errors += layers[std::size(layers) - 1].error[j];
+			//calculate outputs given inputs
+			propagate(inputs[j]);
+			//find error
+			error(outputs[j]);
+			//sum error
+			for (auto k = 0; k < std::size(errors); k++)
+			{
+				for (auto l = 0; l < std::size(errors[k]); l++)
+				{
+					errorsSum[k][l] += errors[k][l];
+				}
+			}
 		}
-		std::cout << errors << "\n";
-		input < std::size(inputs) - 1 ? input++ : input = 0;
-		output < std::size(outputs) - 1 ? output++ : output = 0;
+		//find cost
+		double cost = 0;
+		for (auto k = 0; k < std::size(errors); k++)
+		{
+			for (auto l = 0; l < std::size(errors[k]); l++)
+			{
+				cost += errorsSum[k][l];
+			}
+		}
+		std::cout << cost << std::endl;
+		//update weights and biases based on error
+		backpropagate();
+		//reset sum of errors
+		for (auto k = 0; k < std::size(errors); k++)
+		{
+			for (auto l = 0; l < std::size(errors[k]); l++)
+			{
+				errorsSum[k][l] = 0;
+			}
+		}
 	}
-	print();
 }
 
 void NeuralNetwork::print()
 {
 	for (auto const& i : layers)
 	{
-		for (auto const& j : i.neurons)
+		for (auto const& j : i.activation)
 		{
 			std::cout << j << "   ";
 		}
